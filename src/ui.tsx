@@ -1,11 +1,13 @@
 import React, { useMemo, useState } from "react";
 import { Box, Text, render, useApp, useInput } from "ink";
-import type { Finding, ScanResult } from "./model.js";
-import { applyCleanup, isGitRepository, preview, sessionStorePath } from "./safety.js";
+import path from "node:path";
+import type { Finding, ScanResult, StagedCleanup, VerificationResult } from "./model.js";
+import { applyCleanup, createStagedCleanup, isGitRepository, prepareCleanup, preview, recordVerification, removeStagedCleanup, sessionStorePath } from "./safety.js";
+import { listVerificationScripts, runVerificationScript, type VerificationScript } from "./verification.js";
 
-type Screen = "overview" | "findings" | "detail" | "selection" | "preview" | "confirm" | "done";
+type Screen = "overview" | "findings" | "detail" | "selection" | "preview" | "verify" | "confirm" | "done";
 
-function App({ scan }: { scan: ScanResult }) {
+function App({ scan, onStageReady, trackOperation }: { scan: ScanResult; onStageReady: (stage: StagedCleanup) => void; trackOperation: (operation: Promise<unknown>) => void }) {
   const { exit } = useApp();
   const [gitAvailable] = useState(() => isGitRepository(scan.root));
   const [screen, setScreen] = useState<Screen>("overview");
@@ -13,7 +15,11 @@ function App({ scan }: { scan: ScanResult }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [cursor, setCursor] = useState(0);
   const [detail, setDetail] = useState<Finding | undefined>();
-  const [previewFiles, setPreviewFiles] = useState<Array<{ path: string; hash: string; lines: number; mode: number }>>([]);
+  const [stage, setStage] = useState<StagedCleanup | undefined>();
+  const [verificationScripts, setVerificationScripts] = useState<VerificationScript[]>([]);
+  const [verificationResults, setVerificationResults] = useState<VerificationResult[]>([]);
+  const [verificationOutput, setVerificationOutput] = useState("");
+  const [verifyCursor, setVerifyCursor] = useState(0);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [sessionId, setSessionId] = useState("");
@@ -77,7 +83,13 @@ function App({ scan }: { scan: ScanResult }) {
         if (screen === "selection") {
           if (!selectedItems.length) { setMessage("Select at least one eligible file."); return; }
           setBusy(true); setMessage("Checking selected files and creating exact preview…");
-          void preview(scan, selectedItems).then((files) => { setPreviewFiles(files); setMessage(""); setScreen("preview"); }).catch((error: Error) => setMessage(error.message)).finally(() => setBusy(false));
+          const preparing = preview(scan, selectedItems)
+            .then((files) => createStagedCleanup(scan.root, files))
+          trackOperation(preparing);
+          void preparing
+            .then((prepared) => { setStage(prepared); onStageReady(prepared); setSessionId(""); setVerificationResults([]); setMessage(""); setScreen("preview"); })
+            .catch((error: Error) => setMessage(error.message))
+            .finally(() => setBusy(false));
         } else {
           const current = filtered[cursor];
           if (current) { setDetail(current); setScreen("detail"); }
@@ -101,16 +113,98 @@ function App({ scan }: { scan: ScanResult }) {
     }
     if (screen === "preview") {
       if (key.escape) { setScreen("selection"); return; }
-      if (key.return) {
-        if (!gitAvailable) { setMessage("Apply is blocked because this project is not in a Git repository. Preview is read-only."); return; }
-        setMessage(""); setScreen("confirm"); return;
+      if (input === "v") {
+        if (!stage) return;
+        if (!gitAvailable) { setMessage("Verification and apply preparation require a Git repository in this release."); return; }
+        setBusy(true);
+        const preparation = (async () => {
+          if (!sessionId) {
+            const prepared = await prepareCleanup(stage);
+            setSessionId(prepared.id);
+          }
+          const scripts = await listVerificationScripts(stage.projectRoot);
+          setVerificationScripts(scripts);
+          setVerifyCursor(0);
+          setVerificationOutput("");
+          setMessage("");
+          setScreen("verify");
+        })();
+        trackOperation(preparation);
+        void preparation.catch((error: Error) => setMessage(error.message)).finally(() => setBusy(false));
+        return;
+      }
+      if (input === "s") {
+        if (!stage || !gitAvailable) { setMessage("Apply is blocked without Git; preview remains read-only."); return; }
+        setBusy(true);
+        const skip = (async () => {
+          const prepared = sessionId ? undefined : await prepareCleanup(stage);
+          const id = prepared?.id ?? sessionId;
+          if (prepared) setSessionId(prepared.id);
+          const result: VerificationResult = { command: [], status: "skipped" };
+          await recordVerification(id, result);
+          setVerificationResults((current) => [...current, result]);
+          setMessage("");
+          setScreen("confirm");
+        })();
+        trackOperation(skip);
+        void skip.catch((error: Error) => setMessage(error.message)).finally(() => setBusy(false));
+      }
+      return;
+    }
+    if (screen === "verify") {
+      if (key.escape) { setScreen("preview"); return; }
+      if (input === "j" || key.downArrow) setVerifyCursor(Math.min(verifyCursor + 1, Math.max(0, verificationScripts.length - 1)));
+      if (input === "k" || key.upArrow) setVerifyCursor(Math.max(0, verifyCursor - 1));
+      if (input === "s") {
+        if (!stage || !sessionId) return;
+        setBusy(true);
+        const skipped: VerificationResult = { command: [], status: "skipped" };
+        const record = recordVerification(sessionId, skipped);
+        trackOperation(record);
+        void record
+          .then(() => { setVerificationResults((current) => [...current, skipped]); setScreen("confirm"); })
+          .catch((error: Error) => setVerificationOutput(error.message))
+          .finally(() => setBusy(false));
+        return;
+      }
+      if (input === "f") {
+        if (!stage || !sessionId) return;
+        setBusy(true);
+        const skipped: VerificationResult = { command: [], status: "skipped" };
+        const record = recordVerification(sessionId, skipped);
+        trackOperation(record);
+        void record
+          .then(() => { setVerificationResults((current) => [...current, skipped]); setScreen("confirm"); })
+          .catch((error: Error) => setVerificationOutput(error.message))
+          .finally(() => setBusy(false));
+        return;
+      }
+      if (input.toLowerCase() === "y") {
+        const script = verificationScripts[verifyCursor];
+        if (!stage || !script) { setVerificationOutput("No supported package scripts were found. Press f to continue without verification."); return; }
+        setBusy(true);
+        setVerificationOutput(`Running ${script.command.join(" ")} in the staged project copy…`);
+        const verification = runVerificationScript(stage, script.name).then(async ({ result, output }) => {
+          await recordVerification(sessionId, result);
+          setVerificationResults((current) => [...current, result]);
+          setVerificationOutput(`${result.status.toUpperCase()} · exit ${result.exitCode} · ${(result.durationMs! / 1000).toFixed(1)}s\n${output}`);
+        });
+        trackOperation(verification);
+        void verification
+          .catch((error: Error) => setVerificationOutput(error.message))
+          .finally(() => setBusy(false));
+        return;
       }
       return;
     }
     if (screen === "confirm") {
       if (input.toLowerCase() === "y") {
+        if (!stage || !sessionId) { setMessage("Recovery session is unavailable. Return to findings and preview again."); return; }
+        if (!gitAvailable) { setMessage("Apply is blocked because this project is not in a Git repository."); return; }
         setBusy(true); setMessage("Saving recovery data and applying selected deletions…");
-        void applyCleanup(scan.root, previewFiles).then((session) => { setSessionId(session.id); setMessage(""); setScreen("done"); }).catch((error: Error) => setMessage(error.message)).finally(() => setBusy(false));
+        const apply = applyCleanup(stage, sessionId);
+        trackOperation(apply);
+        void apply.then((session) => { setVerificationResults(session.verification); setMessage(""); setScreen("done"); }).catch((error: Error) => setMessage(error.message)).finally(() => setBusy(false));
       }
       if (input.toLowerCase() === "n" || key.escape) { setScreen("preview"); setMessage(""); }
     }
@@ -152,18 +246,33 @@ function App({ scan }: { scan: ScanResult }) {
     </Box>}
     {screen === "selection" && message && <Text color="yellow">{message}</Text>}
     {screen === "preview" && <Box flexDirection="column" marginTop={1}>
-      <Text bold>Preview · {previewFiles.length} file deletion(s)</Text>
-      {previewFiles.map((file) => <Text key={file.path}>DELETE {pathForDisplay(scan.root, file.path)} · {file.lines} lines · SHA256 {file.hash.slice(0, 12)}</Text>)}
-      <Text color="yellow">No verification command will run. Verification support is not implemented in this build.</Text>
-      <Text>{gitAvailable ? "Enter to continue to explicit approval" : "Apply blocked without Git; preview is read-only"} · Esc back</Text>
+      <Text bold>Staged preview · {stage?.files.length ?? 0} file deletion(s)</Text>
+      {stage?.files.map((file) => <Text key={file.path}>DELETE {pathForDisplay(scan.root, file.path)} · {file.lines} lines · SHA256 {file.hash.slice(0, 12)}</Text>)}
+      <Text dimColor>Temporary copy: {stage?.tempRoot}</Text>
+      <Text color="yellow">The copy excludes .git and node_modules. Approved scripts run as project code and may have external side effects; this is not a sandbox.</Text>
+      <Text>{gitAvailable ? "v verify in copy · s skip checks and continue · Esc back" : "Apply is blocked without Git; preview is read-only"}</Text>
+    </Box>}
+    {screen === "verify" && <Box flexDirection="column" marginTop={1}>
+      <Text bold>Verification · staged copy</Text>
+      <Text>Working directory: {stage ? path.join(stage.tempRoot, "project") : "unavailable"}</Text>
+      <Text dimColor>Environment: current shell environment, CI=1, no color · 120 second timeout</Text>
+      {verificationScripts.length === 0 && <Text color="yellow">No supported npm scripts found (test/build/typecheck/lint).</Text>}
+      {verificationScripts.map((script, index) => <Text key={script.name} color={index === verifyCursor ? "cyan" : undefined}>
+        {index === verifyCursor ? ">" : " "} {script.command.join(" ")}{verificationResults.filter((result) => result.command.join(" ") === script.command.join(" ")).map((result) => ` · ${result.status}`).at(-1) ?? ""}
+      </Text>)}
+      <Text dimColor>↑↓/j/k choose · y approve and run this command · run each command separately</Text>
+      <Text dimColor>f finish checks · s skip checks · Esc back</Text>
+      {verificationOutput && <Text>{verificationOutput}</Text>}
     </Box>}
     {screen === "confirm" && <Box flexDirection="column" marginTop={1}>
-      <Text color="red" bold>Apply these {previewFiles.length} deletions to the project?</Text>
+      <Text color="red" bold>Apply these {stage?.files.length ?? 0} deletions to the project?</Text>
+      {verificationResults.some((result) => result.status === "failed") && <Text color="yellow">At least one approved verification command failed. You may return to review or explicitly apply anyway.</Text>}
+      {verificationResults.every((result) => result.status === "passed") && <Text color="green">All approved verification commands passed.</Text>}
       <Text>Original contents will be stored in {sessionStorePath} before deletion.</Text>
-      <Text>Type y to apply, n to return. This cannot be undone if you delete the recovery store.</Text>
+      <Text>Type y to apply, n to return. Project-wide changes since preview block apply.</Text>
     </Box>}
     {screen === "done" && <Box flexDirection="column" marginTop={1}>
-      {sessionId ? <><Text color="green" bold>Cleanup applied · {sessionId}</Text><Text>Restore with: ghost-sweeper undo {sessionId}</Text></> : <Text>{message || "No changes were applied."}</Text>}
+      {sessionId ? <><Text color="green" bold>Cleanup applied · {sessionId}</Text><Text>Verification: {verificationResults.map((result) => result.command.length ? `${result.command.join(" ")} ${result.status}` : result.status).join(", ") || "skipped"}</Text><Text>Restore with: ghost-sweeper undo {sessionId}</Text></> : <Text>{message || "No changes were applied."}</Text>}
       <Text>Press q or Ctrl-C to exit.</Text>
     </Box>}
     {message && screen !== "selection" && screen !== "done" && <Text color="yellow">{message}</Text>}
@@ -176,6 +285,13 @@ function pathForDisplay(root: string, file: string): string {
 }
 
 export async function runTui(scan: ScanResult): Promise<void> {
-  const app = render(<App scan={scan} />, { exitOnCtrlC: false });
-  await app.waitUntilExit();
+  const stages: StagedCleanup[] = [];
+  const operations: Promise<unknown>[] = [];
+  const app = render(<App scan={scan} onStageReady={(created) => { stages.push(created); }} trackOperation={(operation) => { operations.push(operation); }} />, { exitOnCtrlC: false });
+  try {
+    await app.waitUntilExit();
+  } finally {
+    await Promise.allSettled(operations);
+    for (const stage of stages) await removeStagedCleanup(stage).catch(() => undefined);
+  }
 }

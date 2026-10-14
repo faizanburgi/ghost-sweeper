@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { analyze } from "./analysis.js";
 import { loadHistory, undo } from "./safety.js";
 import { runTui } from "./ui.js";
+import { asErrorMessage, GhostSweeperError } from "./errors.js";
 import type { Finding } from "./model.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -51,12 +52,19 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.includes("--help") || args.includes("-h")) return usage();
   if (args.includes("--version") || args.includes("-V")) { stdout.write(`${packageJson.version}\n`); return; }
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major < 22 || major === 22 && minor < 12) {
+    throw new Error(`Node.js 22.12 or newer is required; found ${process.versions.node}.`);
+  }
   const command = args[0] && !args[0].startsWith("-") ? args[0] : "scan";
 
   if (command === "history") {
     const sessions = await loadHistory();
     if (!sessions.length) { stdout.write("No Ghost Sweeper cleanup sessions found.\n"); return; }
-    for (const session of sessions) stdout.write(`${session.id.padEnd(36)} ${session.createdAt}  ${session.status.padEnd(12)} ${session.files.length} file(s)\n`);
+    for (const session of sessions) {
+      const checks = session.verification.map((item) => item.command.length ? `${item.command.join(" ")}: ${item.status}` : item.status).join(", ") || "not run";
+      stdout.write(`${session.id.padEnd(36)} ${session.createdAt}  ${session.status.padEnd(12)} ${session.files.length} file(s) · checks: ${checks}\n`);
+    }
     stdout.write("\nRestore with: ghost-sweeper undo <session-id>\n");
     return;
   }
@@ -64,7 +72,7 @@ async function main(): Promise<void> {
   if (command === "undo") {
     const id = args[1];
     if (!id && stdin.isTTY) {
-      const sessions = (await loadHistory()).filter((session) => ["applied", "interrupted", "conflict"].includes(session.status));
+      const sessions = (await loadHistory()).filter((session) => ["prepared", "applying", "applied", "interrupted", "conflict", "restoring"].includes(session.status));
       if (sessions.length > 1) {
         stderr.write("More than one cleanup can be restored. Choose a session:\n");
         sessions.forEach((session, index) => stderr.write(`  ${index + 1}. ${session.id} (${session.status}, ${session.files.length} file(s))\n`));
@@ -108,6 +116,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  stderr.write(`Ghost Sweeper: ${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
+  stderr.write(`Ghost Sweeper: ${asErrorMessage(error)}\n`);
+  process.exitCode = error instanceof GhostSweeperError ? error.exitCode : 1;
 });

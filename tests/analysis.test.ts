@@ -1,6 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import path from "node:path";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { normalizeKnipReport } from "../src/analysis.ts";
+import { analyze } from "../src/analysis.ts";
+
+let scratch = "";
+
+afterAll(async () => {
+  if (scratch) await rm(scratch, { recursive: true, force: true });
+});
 
 describe("Knip result normalization", () => {
   it("makes only in-project unused files eligible for deletion", () => {
@@ -19,5 +28,16 @@ describe("Knip result normalization", () => {
     expect(findings[1].action).toBe("view-only");
     expect(findings[2].action).toBe("view-only");
     expect(findings[2].path).toBeUndefined();
+  });
+
+  it("scans a basic TypeScript project through the bundled Knip JSON boundary", async () => {
+    scratch = await mkdtemp(path.join(tmpdir(), "ghost-sweeper-knip-test-"));
+    await mkdir(path.join(scratch, "src"), { recursive: true });
+    await writeFile(path.join(scratch, "package.json"), JSON.stringify({ name: "knip-fixture", type: "module" }));
+    await writeFile(path.join(scratch, "src", "index.ts"), "export const live = 1;\n");
+    await writeFile(path.join(scratch, "src", "legacy.ts"), "export const abandoned = 2;\n");
+    const result = await analyze(scratch);
+    expect(result.knipVersion).toMatch(/^6\./);
+    expect(result.findings.some((item) => item.kind === "file" && item.path === path.join(scratch, "src", "legacy.ts"))).toBe(true);
   });
 });

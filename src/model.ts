@@ -21,6 +21,28 @@ export interface ScanResult {
   knipVersion: string;
 }
 
+export interface PreviewFile {
+  path: string;
+  hash: string;
+  lines: number;
+  mode: number;
+}
+
+export interface StagedCleanup {
+  id: string;
+  tempRoot: string;
+  projectRoot: string;
+  projectFingerprint: string;
+  files: PreviewFile[];
+}
+
+export interface VerificationResult {
+  command: string[];
+  status: "passed" | "failed" | "skipped" | "blocked";
+  exitCode?: number;
+  durationMs?: number;
+}
+
 export interface BackupEntry {
   path: string;
   originalBase64: string;
@@ -35,6 +57,6 @@ export interface Session {
   createdAt: string;
   root: string;
   status: "prepared" | "applying" | "applied" | "interrupted" | "conflict" | "restoring" | "restored";
-  verification: Array<{ command: string; status: "not-run" | "passed" | "failed" | "skipped" }>;
+  verification: VerificationResult[];
   files: BackupEntry[];
 }

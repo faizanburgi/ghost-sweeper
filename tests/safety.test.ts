@@ -75,6 +75,72 @@ describe("safe cleanup sessions", () => {
     expect(await readFile(file, "utf8")).toBe("user edit\n");
   });
 
+  it("restores deleted files and leaves pending files intact after an interrupted apply", async () => {
+    const root = await gitProject("interrupted-apply");
+    const first = path.join(root, "legacy-one.ts");
+    const second = path.join(root, "legacy-two.ts");
+    await writeFile(first, "first original\n");
+    await writeFile(second, "second original\n");
+    const scan = { root } as import("../src/model.ts").ScanResult;
+    const findings = [first, second].map((file, index) => ({
+      id: `interrupted-${index}`,
+      kind: "file",
+      name: path.basename(file),
+      path: file,
+      risk: "review-recommended",
+      action: "delete-file"
+    } as import("../src/model.ts").Finding));
+    const staged = await safety.createStagedCleanup(root, await safety.preview(scan, findings));
+    stagedCopies.push(staged);
+    const prepared = await safety.prepareCleanup(staged);
+
+    // Model a process exit after the first unlink, before the next operation.
+    await rm(first);
+    const journalPath = path.join(stateDir, `${prepared.id}.json`);
+    const journal = JSON.parse(await readFile(journalPath, "utf8")) as import("../src/model.ts").Session;
+    journal.status = "applying";
+    journal.files[0].state = "deleted";
+    await writeFile(journalPath, JSON.stringify(journal));
+
+    const restored = await safety.undo(prepared.id);
+    expect(restored.status).toBe("restored");
+    expect(await readFile(first, "utf8")).toBe("first original\n");
+    expect(await readFile(second, "utf8")).toBe("second original\n");
+  });
+
+  it("restores conflict-free files and resumes a partial undo after the conflict is resolved", async () => {
+    const root = await gitProject("partial-undo");
+    const conflicted = path.join(root, "legacy-one.ts");
+    const restorable = path.join(root, "legacy-two.ts");
+    await writeFile(conflicted, "first original\n");
+    await writeFile(restorable, "second original\n");
+    const scan = { root } as import("../src/model.ts").ScanResult;
+    const findings = [conflicted, restorable].map((file, index) => ({
+      id: `partial-${index}`,
+      kind: "file",
+      name: path.basename(file),
+      path: file,
+      risk: "review-recommended",
+      action: "delete-file"
+    } as import("../src/model.ts").Finding));
+    const staged = await safety.createStagedCleanup(root, await safety.preview(scan, findings));
+    stagedCopies.push(staged);
+    const prepared = await safety.prepareCleanup(staged);
+    await safety.recordVerification(prepared.id, { command: [], status: "skipped" });
+    const applied = await safety.applyCleanup(staged, prepared.id);
+    await writeFile(conflicted, "new user content\n");
+
+    await expect(safety.undo(applied.id)).rejects.toThrow(/recreated paths/);
+    expect(await readFile(conflicted, "utf8")).toBe("new user content\n");
+    expect(await readFile(restorable, "utf8")).toBe("second original\n");
+
+    await rm(conflicted);
+    const resumed = await safety.undo(applied.id);
+    expect(resumed.status).toBe("restored");
+    expect(await readFile(conflicted, "utf8")).toBe("first original\n");
+    expect(await readFile(restorable, "utf8")).toBe("second original\n");
+  });
+
   it("recognizes a completed restore if the process stopped before journaling it", async () => {
     const root = await gitProject("interrupted-undo");
     const file = path.join(root, "legacy.ts");

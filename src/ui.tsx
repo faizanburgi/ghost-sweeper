@@ -71,8 +71,8 @@ function App({ scan }: { scan: ScanResult }) {
           setSelected(next);
         }
       }
-      if (input === "j" || key.down) setCursor(Math.min(cursor + 1, Math.max(0, filtered.length - 1)));
-      if (input === "k" || key.up) setCursor(Math.max(0, cursor - 1));
+      if (input === "j" || key.downArrow) setCursor(Math.min(cursor + 1, Math.max(0, filtered.length - 1)));
+      if (input === "k" || key.upArrow) setCursor(Math.max(0, cursor - 1));
       if (key.return) {
         if (screen === "selection") {
           if (!selectedItems.length) { setMessage("Select at least one eligible file."); return; }

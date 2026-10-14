@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout, stderr } from "node:process";
 import { readFile } from "node:fs/promises";

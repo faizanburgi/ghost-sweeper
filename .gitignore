@@ -1,0 +1,4 @@
+node_modules/
+dist/
+coverage/
+.ghost-sweeper-tmp/

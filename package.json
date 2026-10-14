@@ -1,0 +1,34 @@
+{
+  "name": "ghost-sweeper",
+  "version": "0.1.0",
+  "description": "Review and safely remove unused project files",
+  "type": "module",
+  "bin": {
+    "ghost-sweeper": "dist/cli.js"
+  },
+  "files": [
+    "dist/**",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "ink": "^6.2.0",
+    "knip": "^6.0.0",
+    "react": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

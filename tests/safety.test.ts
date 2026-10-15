@@ -58,6 +58,49 @@ describe("safe cleanup sessions", () => {
     expect(await readFile(file, "utf8")).toBe(original);
   });
 
+  it("allows an individually selected Markdown candidate and restores its original contents", async () => {
+    const root = await gitProject("markdown-roundtrip");
+    const directory = path.join(root, "docs");
+    const file = path.join(directory, "old-guide.md");
+    const original = "# Old guide\n\nOriginal documentation.\n";
+    await mkdir(directory, { recursive: true });
+    await writeFile(file, original);
+    const finding = {
+      id: "markdown-old-guide",
+      kind: "markdown",
+      name: "docs/old-guide.md",
+      path: file,
+      risk: "uncertain",
+      action: "delete-file"
+    } as import("../src/model.ts").Finding;
+    const scan = { root } as import("../src/model.ts").ScanResult;
+    const staged = await safety.createStagedCleanup(root, await safety.preview(scan, [finding]));
+    stagedCopies.push(staged);
+    const prepared = await safety.prepareCleanup(staged);
+    await safety.recordVerification(prepared.id, { command: [], status: "skipped" });
+    const applied = await safety.applyCleanup(staged, prepared.id);
+    await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
+    const restored = await safety.undo(applied.id);
+    expect(restored.status).toBe("restored");
+    expect(await readFile(file, "utf8")).toBe(original);
+  });
+
+  it("protects recognized project guide Markdown from crafted deletion selections", async () => {
+    const root = await gitProject("protected-markdown");
+    const file = path.join(root, "README.md");
+    await writeFile(file, "# Keep this guide\n");
+    const finding = {
+      id: "readme",
+      kind: "markdown",
+      name: "README.md",
+      path: file,
+      risk: "uncertain",
+      action: "delete-file"
+    } as import("../src/model.ts").Finding;
+    await expect(safety.preview({ root } as import("../src/model.ts").ScanResult, [finding])).rejects.toThrow(/protected/);
+    expect(await readFile(file, "utf8")).toContain("Keep this guide");
+  });
+
   it("does not overwrite a file recreated after cleanup", async () => {
     const root = await gitProject("conflict");
     const file = path.join(root, "legacy.ts");

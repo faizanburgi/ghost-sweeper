@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Finding, FindingKind, ScanResult } from "./model.js";
+import { findUnreferencedMarkdown } from "./markdown.js";
 
 const require = createRequire(import.meta.url);
 
@@ -112,8 +113,8 @@ export async function analyze(rootInput: string): Promise<ScanResult> {
   } catch {
     throw new Error(`Knip returned invalid JSON. ${output.stderr.trim()}`);
   }
-  const findings = normalizeKnipReport(parsed, root);
-  const unusedFiles = findings.filter((finding) => finding.kind === "file").length;
+  const findings = [...normalizeKnipReport(parsed, root), ...await findUnreferencedMarkdown(root)];
+  const unusedFiles = findings.filter((finding) => finding.kind === "file" || finding.kind === "markdown").length;
   const dependencies = { ...project.dependencies, ...project.devDependencies };
   const framework = Object.keys(dependencies).find((name) => ["next", "vite", "react", "astro", "@angular/core", "svelte"].includes(name)) ?? "JavaScript/TypeScript";
   const warnings = output.stderr.trim() ? [output.stderr.trim()] : [];

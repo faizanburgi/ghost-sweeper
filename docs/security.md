@@ -4,6 +4,8 @@
 
 Ghost Sweeper starts Knip as a child process in the selected project. Knip plugins may dynamically load project configuration files, so scan only repositories you trust. Interactive scans ask before running; non-interactive scans require `--allow-config-execution`.
 
+For Markdown, Ghost Sweeper follows local links starting from recognized project guides and reports Markdown files that are not reachable from them. It protects common repository guides (`README.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`, `AGENTS.md`, other recognized instruction/governance files) and Markdown under `.github/`. The scanner does not understand every documentation site configuration, external link, generated navigation list, or standalone guide. These findings are marked uncertain and are excluded from bulk selection; inspect the displayed reason and select each one manually if you decide it can be removed.
+
 ## Staging and apply
 
 The staged project copy is created in the operating system's temporary directory with private permissions where supported. It excludes `.git` and `node_modules`, preserves project symlinks as links, and is removed when the interactive review exits. The copy is not a security sandbox. Large files and additional workspace data may make staging slow or consume substantial temporary disk space.

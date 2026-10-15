@@ -1,10 +1,10 @@
 # Ghost Sweeper 👻
 
-Review potentially unused files and remove only the candidates you explicitly approve. Ghost Sweeper uses [Knip](https://knip.dev/) for analysis; it does not claim static analysis proves that code is dead.
+Review potentially unused source and Markdown files, and remove only the candidates you explicitly approve. Ghost Sweeper uses [Knip](https://knip.dev/) for source analysis and a limited local-link scan for Markdown; neither can prove that a file is unnecessary.
 
 ## Current status
 
-Ghost Sweeper uses Knip for analysis. The interactive review can select and remove unused JavaScript/TypeScript files only; exports, types, and dependencies are view-only. Destructive apply requires a Git repository. Basic JavaScript/TypeScript and React/Vite are experimental until broader fixture and real-project validation is complete.
+Ghost Sweeper uses Knip to find unused source files and a small local-link scanner to find Markdown files that cannot be reached from recognized project guides. The interactive review can select and remove these source and Markdown candidates; exports, types, and dependencies are view-only. Markdown findings are marked uncertain because standalone guides, externally linked documents, or generated documentation navigation may not be visible in the repository. Project guide files such as `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, `AGENTS.md`, and GitHub templates are protected. Uncertain Markdown candidates must be selected individually. Destructive apply requires a Git repository. Basic JavaScript/TypeScript and React/Vite are experimental until broader fixture and real-project validation is complete.
 
 ## Development
 
@@ -34,7 +34,7 @@ Apply checks the project content and permissions against the staged snapshot, wr
 ## Safety
 
 - Findings require human review; selection is explicit.
-- Only regular source files identified by Knip as unused can be removed.
+- Only regular source files identified by Knip and Markdown files identified as unreferenced can be removed.
 - Files are staged in a temporary project copy; the source tree stays unchanged until apply is approved.
 - Files are backed up and journaled before deletion.
 - Apply checks the staged project fingerprint and target hashes; undo checks backups and stops on conflicts.

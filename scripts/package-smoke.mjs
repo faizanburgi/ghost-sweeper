@@ -33,7 +33,11 @@ try {
   run(executable, ["--help"]);
 
   await mkdir(path.join(fixtureRoot, "src"), { recursive: true });
+  await mkdir(path.join(fixtureRoot, "docs"), { recursive: true });
   await writeFile(path.join(fixtureRoot, "package.json"), JSON.stringify({ name: "ghost-sweeper-package-smoke", type: "module" }));
+  await writeFile(path.join(fixtureRoot, "README.md"), "[Guide](docs/guide.md)\n");
+  await writeFile(path.join(fixtureRoot, "docs", "guide.md"), "# Guide\n");
+  await writeFile(path.join(fixtureRoot, "docs", "orphan.md"), "# Orphan guide\n");
   await writeFile(path.join(fixtureRoot, "src", "index.ts"), "export const live = 1;\n");
   await writeFile(path.join(fixtureRoot, "src", "unused.ts"), "export const unused = 2;\n");
   const json = run(executable, ["scan", "--json", "--allow-config-execution"], { cwd: fixtureRoot });
@@ -41,7 +45,13 @@ try {
   if (!result.findings.some((finding) => finding.kind === "file" && finding.path === path.join("src", "unused.ts"))) {
     throw new Error("The installed package did not report the fixture's unused source file.");
   }
-  process.stdout.write("Packed install, CLI launch, and Knip JSON scan passed.\n");
+  if (!result.findings.some((finding) => finding.kind === "markdown" && finding.path === path.join("docs", "orphan.md"))) {
+    throw new Error("The installed package did not report the fixture's unreferenced Markdown file.");
+  }
+  if (result.findings.some((finding) => finding.path === path.join("docs", "guide.md"))) {
+    throw new Error("The installed package reported a Markdown file linked from README.md.");
+  }
+  process.stdout.write("Packed install, CLI launch, and source/Markdown JSON scan passed.\n");
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });
 }

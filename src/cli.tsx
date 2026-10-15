@@ -16,7 +16,7 @@ function usage(): void {
   stdout.write(`Ghost Sweeper ${packageJson.version}\n\n` +
     `Usage:\n  ghost-sweeper [scan] [--json]\n  ghost-sweeper history\n  ghost-sweeper undo [session-id]\n\n` +
     `Options:\n  --json                       Print machine-readable findings (scan only)\n  --allow-config-execution     Acknowledge Knip may execute project config (required without a TTY)\n  --help                       Show this help\n  --version                    Show version\n\n` +
-    `Only explicitly selected unused source files can be removed. Runs Knip; scan trusted projects only because some Knip plugins load project configuration.\n`);
+    `Only explicitly selected unused source and unreferenced Markdown files can be removed. Runs Knip; scan trusted projects only because some Knip plugins load project configuration.\n`);
 }
 
 async function findProjectRoot(start: string): Promise<string> {
@@ -106,7 +106,7 @@ async function main(): Promise<void> {
     return;
   }
   if (!stdin.isTTY || !stdout.isTTY) {
-    stdout.write(`Ghost Sweeper · ${result.projectName}\n${result.framework} · Knip ${result.knipVersion}\nFound ${result.findings.length} finding(s), including ${result.unusedFiles} unused file(s). No files have been changed.\n`);
+    stdout.write(`Ghost Sweeper · ${result.projectName}\n${result.framework} · Knip ${result.knipVersion}\nFound ${result.findings.length} finding(s), including ${result.unusedFiles} source/Markdown file candidate(s). No files have been changed.\n`);
     for (const finding of result.findings) stdout.write(`${formatFinding(finding, root)}\n`);
     if (result.warnings.length) stderr.write(`\nKnip warnings:\n${result.warnings.join("\n")}\n`);
     stdout.write("\nRun in an interactive terminal to review eligible file deletions.\n");

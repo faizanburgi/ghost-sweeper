@@ -23,7 +23,7 @@ function App({ scan, onStageReady, trackOperation }: { scan: ScanResult; onStage
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [sessionId, setSessionId] = useState("");
-  const [category, setCategory] = useState<"all" | "file" | "export" | "dependency">("all");
+  const [category, setCategory] = useState<"all" | "file" | "markdown" | "export" | "dependency">("all");
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
 
@@ -62,10 +62,11 @@ function App({ scan, onStageReady, trackOperation }: { scan: ScanResult; onStage
       if (input === "1") { setCategory("file"); setCursor(0); }
       if (input === "2") { setCategory("export"); setCursor(0); }
       if (input === "3") { setCategory("dependency"); setCursor(0); }
+      if (input === "4") { setCategory("markdown"); setCursor(0); }
       if (input === "0") { setCategory("all"); setCursor(0); }
       if (input === "/") { setQuery(""); setCursor(0); setSearching(true); return; }
       if (input === "a") {
-        const eligible = filtered.filter((item) => item.action === "delete-file");
+        const eligible = filtered.filter((item) => item.action === "delete-file" && item.risk !== "uncertain");
         setSelected(new Set([...selected, ...eligible.map((item) => item.id)]));
       }
       if (input === "n") setSelected(new Set());
@@ -96,7 +97,7 @@ function App({ scan, onStageReady, trackOperation }: { scan: ScanResult; onStage
         }
       }
       if (input === "p" || input === "v") setScreen("selection");
-      if (input === "?" ) setMessage("↑↓/j/k move · Space select · Enter details · 1 files · 2 exports · 3 dependencies · 0 all · a select eligible · n clear · p preview · q quit");
+      if (input === "?" ) setMessage("↑↓/j/k move · Space select · Enter details · 1 source · 2 exports · 3 dependencies · 4 Markdown · 0 all · a select stronger candidates · n clear · p preview · q quit");
       return;
     }
     if (screen === "detail") {
@@ -218,7 +219,7 @@ function App({ scan, onStageReady, trackOperation }: { scan: ScanResult; onStage
     {scan.warnings.map((warning, index) => <Text key={`warning-${index}`} color="yellow">Knip: {warning}</Text>)}
     {screen === "overview" && <Box flexDirection="column" marginTop={1}>
       <Text>Scan complete. No files have been changed.</Text>
-      <Text>Unused files: {count("file")}   Exports/types: {count("export") + count("type")}   Dependencies: {count("dependency")}</Text>
+      <Text>Source files: {count("file")}   Markdown: {count("markdown")}   Exports/types: {count("export") + count("type")}   Dependencies: {count("dependency")}</Text>
       <Text color="yellow">Trust notice: Knip plugins may load and execute project configuration files.</Text>
       <Text>Press Enter to review findings · q to quit</Text>
     </Box>}
@@ -229,11 +230,14 @@ function App({ scan, onStageReady, trackOperation }: { scan: ScanResult; onStage
       {filtered.slice(Math.max(0, cursor - 8), cursor + 12).map((finding, localIndex) => {
         const absoluteIndex = Math.max(0, cursor - 8) + localIndex;
         const marker = selected.has(finding.id) ? "☑" : finding.action === "delete-file" ? "☐" : "·";
+        const treatment = finding.action !== "delete-file"
+          ? "[view only]"
+          : finding.risk === "uncertain" ? "[uncertain · select individually]" : "[review required]";
         return <Text key={finding.id} color={absoluteIndex === cursor ? "cyan" : undefined}>
-          {absoluteIndex === cursor ? ">" : " "} {marker} {finding.kind.padEnd(12)} {finding.name} {finding.action !== "delete-file" ? "[view only]" : "[review required]"}
+          {absoluteIndex === cursor ? ">" : " "} {marker} {finding.kind.padEnd(12)} {finding.name} {treatment}
         </Text>;
       })}
-      <Text dimColor>{searching ? `Search input: ${query} · Enter finish · Esc clear` : "↑↓/j/k move · Space select · Enter details/preview · / search · 1 files · 2 exports · 3 deps · 0 all · a select eligible · n clear · Esc back"}</Text>
+      <Text dimColor>{searching ? `Search input: ${query} · Enter finish · Esc clear` : "↑↓/j/k move · Space select · Enter details/preview · / search · 1 source · 2 exports · 3 deps · 4 Markdown · 0 all · a select stronger · n clear · Esc back"}</Text>
     </Box>}
     {screen === "detail" && detail && <Box flexDirection="column" marginTop={1}>
       <Text bold>{detail.name}</Text>

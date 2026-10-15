@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Finding, PreviewFile, ScanResult, Session, StagedCleanup, VerificationResult } from "./model.js";
 import { GhostSweeperError } from "./errors.js";
+import { isProtectedMarkdownPath } from "./markdown.js";
 
 const digest = (buffer: Buffer) => createHash("sha256").update(buffer).digest("hex");
 export const sessionStorePath = process.env.GHOST_SWEEPER_STATE_DIR
@@ -104,8 +105,9 @@ function blockedReason(relative: string): string | undefined {
   if (normalized.startsWith("../") || path.isAbsolute(relative)) return "Path is outside the project root.";
   if (/(^|\/)(node_modules|\.git|dist|build|coverage)(\/|$)/i.test(normalized)) return "Generated or dependency paths cannot be removed.";
   if (/(^|\/)(app|pages|routes|api)(\/|$)/i.test(normalized)) return "Framework convention paths require manual review and are protected in this release.";
+  if (normalized.toLowerCase().endsWith(".md") && isProtectedMarkdownPath(normalized)) return "Project guide and GitHub workflow Markdown files are protected.";
   if (/\.(d\.ts|config\.[cm]?[jt]sx?)$/i.test(normalized) || /(^|\/)index\.[cm]?[jt]sx?$/i.test(normalized)) return "Entry, declaration, and configuration files are protected.";
-  if (!/\.(js|jsx|mjs|cjs|ts|tsx|mts|cts)$/i.test(normalized)) return "Only JavaScript and TypeScript source files are eligible in this release.";
+  if (!/\.(js|jsx|mjs|cjs|ts|tsx|mts|cts|md)$/i.test(normalized)) return "Only supported source and Markdown files are eligible in this release.";
   return undefined;
 }
 

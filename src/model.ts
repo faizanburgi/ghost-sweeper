@@ -1,4 +1,4 @@
-export type FindingKind = "file" | "export" | "type" | "dependency" | "other";
+export type FindingKind = "file" | "markdown" | "export" | "type" | "dependency" | "other";
 
 export interface Finding {
   id: string;

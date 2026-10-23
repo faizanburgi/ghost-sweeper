@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { chmod, cp, link, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rm, stat, unlink } from "node:fs/promises";
+import { chmod, cp, link, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Finding, PreviewFile, ScanResult, Session, StagedCleanup, VerificationResult } from "./model.js";
@@ -84,7 +84,13 @@ export async function createStagedCleanup(root: string, files: PreviewFile[]): P
       const stagedInfo = await lstat(stagedPath);
       if (!stagedInfo.isFile() || stagedInfo.isSymbolicLink()) throw new Error(`${relative}: staged candidate is not a regular file.`);
       if (digest(await readFile(stagedPath)) !== file.hash) throw new Error(`${relative} changed while the preview copy was prepared. Rescan and preview again.`);
-      await unlink(stagedPath);
+      if (file.replacementBase64 !== undefined) {
+        const replacement = Buffer.from(file.replacementBase64, "base64");
+        if (digest(replacement) !== file.replacementHash) throw new Error(`${relative}: replacement content hash is invalid.`);
+        await writeFile(stagedPath, replacement, { mode: stagedInfo.mode & 0o777 });
+      } else {
+        await unlink(stagedPath);
+      }
     }
     return { id: path.basename(tempRoot), tempRoot, projectRoot, projectFingerprint, files };
   } catch (error) {
@@ -177,6 +183,36 @@ export async function preview(scan: ScanResult, selected: Finding[]): Promise<Ar
   return result;
 }
 
+export async function previewMarkdownMerge(rootInput: string, destination: string, draft: string, removals: string[], expectedHashes?: Map<string, string>): Promise<PreviewFile[]> {
+  const root = await realpath(rootInput);
+  const actions = new Map<string, PreviewFile>();
+  const targets: Array<{ path: string; replacement?: string }> = [{ path: destination, replacement: draft }, ...removals.map((file) => ({ path: file }))];
+  for (const target of targets) {
+    const absolute = path.resolve(root, target.path);
+    const relative = path.relative(root, absolute).split(path.sep).join("/");
+    const blocked = blockedReason(relative);
+    if (blocked) throw new GhostSweeperError(`${relative}: ${blocked}`, 2);
+    if (!relative.toLowerCase().endsWith(".md")) throw new GhostSweeperError(`${relative}: Markdown merge actions only support .md files.`, 2);
+    await rejectSymlinkTraversal(root, path.relative(root, absolute));
+    const info = await lstat(absolute);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error(`${relative}: only regular Markdown files can be changed.`);
+    const parent = await realpath(path.dirname(absolute));
+    if (parent !== root && !parent.startsWith(`${root}${path.sep}`)) throw new Error(`${relative}: path escapes the project root.`);
+    const current = await readFile(absolute);
+    const expectedHash = expectedHashes?.get(relative);
+    if (expectedHash && digest(current) !== expectedHash) throw new Error(`${relative} changed since the Markdown comparison. Compare again before merging.`);
+    const replacement = target.replacement === undefined ? undefined : Buffer.from(target.replacement, "utf8");
+    actions.set(absolute, {
+      path: absolute,
+      hash: digest(current),
+      lines: current.length ? current.toString("utf8").split("\n").length : 0,
+      mode: info.mode,
+      ...(replacement ? { replacementBase64: replacement.toString("base64"), replacementHash: digest(replacement) } : {})
+    });
+  }
+  return [...actions.values()];
+}
+
 async function prospectiveRealpath(target: string): Promise<string> {
   let current = path.resolve(target);
   const suffix: string[] = [];
@@ -252,12 +288,14 @@ export async function prepareCleanup(stage: StagedCleanup): Promise<Session> {
     if (digest(current) !== file.hash) throw new Error(`${path.relative(root, file.path)} changed after preview. Rescan before applying.`);
     const info = await lstat(file.path);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error(`${path.relative(root, file.path)} is no longer a regular file.`);
+    if (file.replacementBase64 !== undefined && digest(Buffer.from(file.replacementBase64, "base64")) !== file.replacementHash) throw new Error(`Replacement content for ${file.path} failed its integrity check.`);
     session.files.push({
       path: path.relative(session.root, file.path),
       originalBase64: current.toString("base64"),
       mode: file.mode,
       originalHash: file.hash,
-      deletedHash: "absent",
+      deletedHash: file.replacementHash ?? "absent",
+      ...(file.replacementBase64 !== undefined ? { replacementBase64: file.replacementBase64, replacementHash: file.replacementHash } : {}),
       state: "pending"
     });
   }
@@ -283,7 +321,7 @@ export async function applyCleanup(stage: StagedCleanup, sessionId: string): Pro
   const session = await readSession(sessionId);
   if (session.status !== "prepared" || session.root !== root) throw new GhostSweeperError(`Session ${sessionId} is no longer prepared for this project.`, 2);
   if (session.files.length !== files.length || session.files.some((entry, index) =>
-    entry.path !== path.relative(root, files[index].path) || entry.originalHash !== files[index].hash)) {
+    entry.path !== path.relative(root, files[index].path) || entry.originalHash !== files[index].hash || entry.replacementHash !== files[index].replacementHash)) {
     throw new GhostSweeperError("The recovery journal does not match this staged preview. Prepare a new cleanup session.", 2);
   }
   if (await fingerprintDirectory(root) !== stage.projectFingerprint) {
@@ -301,8 +339,21 @@ export async function applyCleanup(stage: StagedCleanup, sessionId: string): Pro
       const absolute = path.resolve(session.root, entry.path);
       const contents = await readFile(absolute);
       if (digest(contents) !== entry.originalHash) throw new Error(`${entry.path} changed during apply; stopping.`);
-      await unlink(absolute);
-      entry.state = "deleted";
+      if (entry.replacementBase64 !== undefined) {
+        const replacement = Buffer.from(entry.replacementBase64, "base64");
+        if (digest(replacement) !== entry.replacementHash) throw new Error(`Replacement backup for ${entry.path} failed its integrity check.`);
+        const temporary = path.join(path.dirname(absolute), `.ghost-sweeper-${randomUUID()}.tmp`);
+        const handle = await open(temporary, "wx", entry.mode & 0o777);
+        try { await handle.writeFile(replacement); await handle.sync(); } finally { await handle.close(); }
+        try {
+          if (digest(await readFile(absolute)) !== entry.originalHash) throw new Error(`${entry.path} changed during apply; stopping.`);
+          await rename(temporary, absolute);
+        } finally { await unlink(temporary).catch(() => undefined); }
+        entry.state = "replaced";
+      } else {
+        await unlink(absolute);
+        entry.state = "deleted";
+      }
       await writeSession(session);
     }
     session.status = "applied";
@@ -363,22 +414,41 @@ export async function undo(id?: string): Promise<Session> {
       continue;
     }
     const exists = await lstat(absolute).then(() => true, () => false);
-    if (entry.state === "pending" && exists) {
-      // The interrupted apply had not reached this file; leave it untouched.
-      entry.state = "restored";
-      await writeSession(session);
-      continue;
-    }
     if (exists) {
-      // A crash can occur after the restore link succeeds but before its journal update.
-      // Recognize our original bytes as restored; preserve every other recreated path.
       const current = await readFile(absolute).catch(() => Buffer.alloc(0));
       if (digest(current) === entry.originalHash) {
+        entry.state = "restored";
+      } else if (entry.replacementBase64 !== undefined && digest(current) === entry.replacementHash) {
+        const bytes = Buffer.from(entry.originalBase64, "base64");
+        if (digest(bytes) !== entry.originalHash) throw new Error(`Backup integrity check failed for ${entry.path}.`);
+        const temporary = path.join(path.dirname(absolute), `.ghost-sweeper-${randomUUID()}.tmp`);
+        const handle = await open(temporary, "wx", entry.mode & 0o777);
+        try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }
+        try {
+          if (digest(await readFile(absolute)) !== entry.replacementHash) {
+            entry.state = "conflict";
+            conflict = true;
+            await writeSession(session);
+            continue;
+          }
+          await rename(temporary, absolute);
+        } finally { await unlink(temporary).catch(() => undefined); }
         entry.state = "restored";
       } else {
         entry.state = "conflict";
         conflict = true;
       }
+      await writeSession(session);
+      continue;
+    }
+    if (entry.state === "pending" && entry.replacementBase64 === undefined) {
+      entry.state = "restored";
+      await writeSession(session);
+      continue;
+    }
+    if (!exists && entry.replacementBase64 !== undefined) {
+      entry.state = "conflict";
+      conflict = true;
       await writeSession(session);
       continue;
     }

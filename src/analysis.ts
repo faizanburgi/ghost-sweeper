@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Finding, FindingKind, ScanResult } from "./model.js";
-import { findUnreferencedMarkdown } from "./markdown.js";
+import { findMarkdownMatchGroups, findUnreferencedMarkdown } from "./markdown.js";
 
 const require = createRequire(import.meta.url);
 
@@ -78,9 +78,11 @@ export function normalizeKnipReport(report: unknown, root: string): Finding[] {
 
 function runKnip(cli: string, root: string): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
+    const childEnv = { ...process.env };
+    delete childEnv.GEMINI_API_KEY;
     const child = spawn(process.execPath, [cli, "--reporter", "json", "--no-progress", "--no-exit-code"], {
       cwd: root,
-      env: { ...process.env, FORCE_COLOR: "0", CI: "1" },
+      env: { ...childEnv, FORCE_COLOR: "0", CI: "1" },
       stdio: ["ignore", "pipe", "pipe"]
     });
     let stdout = "";
@@ -118,6 +120,7 @@ export async function analyze(rootInput: string): Promise<ScanResult> {
   const dependencies = { ...project.dependencies, ...project.devDependencies };
   const framework = Object.keys(dependencies).find((name) => ["next", "vite", "react", "astro", "@angular/core", "svelte"].includes(name)) ?? "JavaScript/TypeScript";
   const warnings = output.stderr.trim() ? [output.stderr.trim()] : [];
-  return { root, projectName: project.name ?? path.basename(root), framework, unusedFiles, findings, warnings, knipVersion: version };
+  const markdownGroups = await findMarkdownMatchGroups(root);
+  return { root, projectName: project.name ?? path.basename(root), framework, unusedFiles, findings, warnings, knipVersion: version, markdownGroups };
 }
 

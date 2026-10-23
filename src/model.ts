@@ -19,6 +19,43 @@ export interface ScanResult {
   findings: Finding[];
   warnings: string[];
   knipVersion: string;
+  markdownGroups: MarkdownMatchGroup[];
+}
+
+export interface MarkdownMatchGroup {
+  id: string;
+  relationship: "duplicate" | "overlapping" | "related";
+  similarity: number;
+  files: Array<{ path: string; protected: boolean; hash: string }>;
+  evidence: string[];
+}
+
+export interface MarkdownSourceReference {
+  path: string;
+  startLine: number;
+  endLine: number;
+  excerpt: string;
+}
+
+export interface MarkdownConflict {
+  id: string;
+  topic: string;
+  sources: MarkdownSourceReference[];
+  resolution?: string;
+}
+
+export interface MarkdownMergeSection {
+  heading: string;
+  content: string;
+  sources: MarkdownSourceReference[];
+}
+
+export interface MarkdownMergeDraft {
+  relationship: "duplicate" | "overlapping" | "related";
+  draft: string;
+  sources: MarkdownSourceReference[];
+  sections: MarkdownMergeSection[];
+  conflicts: MarkdownConflict[];
 }
 
 export interface PreviewFile {
@@ -26,6 +63,8 @@ export interface PreviewFile {
   hash: string;
   lines: number;
   mode: number;
+  replacementBase64?: string;
+  replacementHash?: string;
 }
 
 export interface StagedCleanup {
@@ -49,7 +88,9 @@ export interface BackupEntry {
   mode: number;
   originalHash: string;
   deletedHash: string;
-  state: "pending" | "deleted" | "restored" | "conflict";
+  replacementBase64?: string;
+  replacementHash?: string;
+  state: "pending" | "deleted" | "replaced" | "restored" | "conflict";
 }
 
 export interface Session {

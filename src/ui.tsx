@@ -221,6 +221,7 @@ function App({ scan, onStageReady, trackOperation }: { scan: ScanResult; onStage
       <Text>Scan complete. No files have been changed.</Text>
       <Text>Source files: {count("file")}   Markdown: {count("markdown")}   Exports/types: {count("export") + count("type")}   Dependencies: {count("dependency")}</Text>
       <Text color="yellow">Trust notice: Knip plugins may load and execute project configuration files.</Text>
+      <Text>Markdown comparisons: {scan.markdownGroups.length} candidate group(s) · run `ghost-sweeper markdown` for source-traced merge review.</Text>
       <Text>Press Enter to review findings · q to quit</Text>
     </Box>}
     {(screen === "findings" || screen === "selection") && <Box flexDirection="column" marginTop={1}>

@@ -38,9 +38,11 @@ describe("Knip result normalization", () => {
     await writeFile(path.join(scratch, "src", "index.ts"), "export const live = 1;\n");
     await writeFile(path.join(scratch, "src", "legacy.ts"), "export const abandoned = 2;\n");
     await writeFile(path.join(scratch, "old-guide.md"), "# Unlinked guide\n");
+    await writeFile(path.join(scratch, "another-guide.md"), "# Unlinked guide\n");
     const result = await analyze(scratch);
     expect(result.knipVersion).toMatch(/^6\./);
     expect(result.findings.some((item) => item.kind === "file" && item.path === path.join(scratch, "src", "legacy.ts"))).toBe(true);
     expect(result.findings.some((item) => item.kind === "markdown" && item.path === path.join(scratch, "old-guide.md"))).toBe(true);
+    expect(result.markdownGroups.some((group) => group.relationship === "duplicate" && group.files.length === 2)).toBe(true);
   });
 });

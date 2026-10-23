@@ -7,6 +7,7 @@ import { analyze } from "./analysis.js";
 import { loadHistory, undo } from "./safety.js";
 import { runTui } from "./ui.js";
 import { asErrorMessage, GhostSweeperError } from "./errors.js";
+import { runMarkdownCommand } from "./markdown-cli.js";
 import type { Finding } from "./model.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -14,8 +15,8 @@ const packageJson = JSON.parse(await readFile(path.resolve(here, "../package.jso
 
 function usage(): void {
   stdout.write(`Ghost Sweeper ${packageJson.version}\n\n` +
-    `Usage:\n  ghost-sweeper [scan] [--json]\n  ghost-sweeper history\n  ghost-sweeper undo [session-id]\n\n` +
-    `Options:\n  --json                       Print machine-readable findings (scan only)\n  --allow-config-execution     Acknowledge Knip may execute project config (required without a TTY)\n  --help                       Show this help\n  --version                    Show version\n\n` +
+    `Usage:\n  ghost-sweeper [scan] [--json] [--offline]\n  ghost-sweeper markdown [--group ID] [--offline] [--allow-cloud-upload]\n  ghost-sweeper history\n  ghost-sweeper undo [session-id]\n\n` +
+    `Options:\n  --json                       Print machine-readable findings and Markdown match groups\n  --offline                    Disable Gemini; local Markdown comparison still works\n  --allow-cloud-upload         Approve upload of the explicitly selected Markdown group in non-TTY use\n  --allow-config-execution     Acknowledge Knip may execute project config (required without a TTY)\n  --help                       Show this help\n  --version                    Show version\n\n` +
     `Only explicitly selected unused source and unreferenced Markdown files can be removed. Runs Knip; scan trusted projects only because some Knip plugins load project configuration.\n`);
 }
 
@@ -86,6 +87,12 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "markdown") {
+    const root = await findProjectRoot(process.cwd());
+    await runMarkdownCommand(root, args.slice(1));
+    return;
+  }
+
   if (command !== "scan") throw new Error(`Unknown command: ${command}. Run ghost-sweeper --help.`);
   const json = args.includes("--json");
   const allowConfigExecution = args.includes("--allow-config-execution");
@@ -102,7 +109,7 @@ async function main(): Promise<void> {
 
   const result = await analyze(root);
   if (json) {
-    stdout.write(`${JSON.stringify({ ...result, findings: result.findings.map((item) => ({ ...item, path: item.path ? path.relative(root, item.path) : undefined })) }, null, 2)}\n`);
+    stdout.write(`${JSON.stringify({ ...result, findings: result.findings.map((item) => ({ ...item, path: item.path ? path.relative(root, item.path) : undefined })), markdownGroups: result.markdownGroups }, null, 2)}\n`);
     return;
   }
   if (!stdin.isTTY || !stdout.isTTY) {

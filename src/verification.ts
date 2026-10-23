@@ -38,9 +38,11 @@ export function runVerificationScript(stage: StagedCleanup, name: string): Promi
     let settled = false;
     let timer: NodeJS.Timeout;
     // npm scripts execute project code. Approval is per command; the temporary cwd is not a sandbox.
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, CI: "1", FORCE_COLOR: "0" };
+    delete childEnv.GEMINI_API_KEY;
     const child = spawn("npm", ["run", name], {
       cwd: path.join(stage.tempRoot, "project"),
-      env: { ...process.env, CI: "1", FORCE_COLOR: "0" },
+      env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       shell: process.platform === "win32"

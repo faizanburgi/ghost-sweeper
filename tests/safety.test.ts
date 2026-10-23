@@ -85,6 +85,46 @@ describe("safe cleanup sessions", () => {
     expect(await readFile(file, "utf8")).toBe(original);
   });
 
+  it("replaces one Markdown destination and removes selected sources as one undoable session", async () => {
+    const root = await gitProject("markdown-merge-roundtrip");
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    const destination = path.join(root, "docs", "guide.md");
+    const source = path.join(root, "docs", "old-guide.md");
+    const originalDestination = "# Old Guide\n\nOriginal destination text.\n";
+    const originalSource = "# Extra Notes\n\nSource material.\n";
+    await writeFile(destination, originalDestination);
+    await writeFile(source, originalSource);
+    const staged = await safety.createStagedCleanup(root, await safety.previewMarkdownMerge(root, "docs/guide.md", "# Combined Guide\n\nMerged text.\n", ["docs/old-guide.md"]));
+    stagedCopies.push(staged);
+    expect(await readFile(path.join(staged.tempRoot, "project", "docs", "guide.md"), "utf8")).toContain("Merged text");
+    await expect(readFile(path.join(staged.tempRoot, "project", "docs", "old-guide.md"))).rejects.toMatchObject({ code: "ENOENT" });
+    const prepared = await safety.prepareCleanup(staged);
+    const applied = await safety.applyCleanup(staged, prepared.id);
+    expect(await readFile(destination, "utf8")).toContain("Merged text");
+    await expect(readFile(source)).rejects.toMatchObject({ code: "ENOENT" });
+    const restored = await safety.undo(applied.id);
+    expect(restored.status).toBe("restored");
+    expect(await readFile(destination, "utf8")).toBe(originalDestination);
+    expect(await readFile(source, "utf8")).toBe(originalSource);
+  });
+
+  it("preserves an edited merge destination during undo while restoring other sources", async () => {
+    const root = await gitProject("markdown-merge-conflict");
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    const destination = path.join(root, "docs", "guide.md");
+    const source = path.join(root, "docs", "source.md");
+    await writeFile(destination, "Original destination\n");
+    await writeFile(source, "Original source\n");
+    const staged = await safety.createStagedCleanup(root, await safety.previewMarkdownMerge(root, "docs/guide.md", "Merged draft\n", ["docs/source.md"]));
+    stagedCopies.push(staged);
+    const prepared = await safety.prepareCleanup(staged);
+    const applied = await safety.applyCleanup(staged, prepared.id);
+    await writeFile(destination, "User edited the merged file\n");
+    await expect(safety.undo(applied.id)).rejects.toThrow(/recreated paths/);
+    expect(await readFile(destination, "utf8")).toBe("User edited the merged file\n");
+    expect(await readFile(source, "utf8")).toBe("Original source\n");
+  });
+
   it("protects recognized project guide Markdown from crafted deletion selections", async () => {
     const root = await gitProject("protected-markdown");
     const file = path.join(root, "README.md");
@@ -98,6 +138,7 @@ describe("safe cleanup sessions", () => {
       action: "delete-file"
     } as import("../src/model.ts").Finding;
     await expect(safety.preview({ root } as import("../src/model.ts").ScanResult, [finding])).rejects.toThrow(/protected/);
+    await expect(safety.previewMarkdownMerge(root, "README.md", "# Replaced\n", [])).rejects.toThrow(/protected/);
     expect(await readFile(file, "utf8")).toContain("Keep this guide");
   });
 

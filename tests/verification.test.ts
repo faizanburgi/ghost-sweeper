@@ -50,4 +50,19 @@ describe("approved staged verification", () => {
     expect(result.result.exitCode).toBe(7);
     expect(await readFile(path.join(root, "old.ts"), "utf8")).toContain("oldValue");
   });
+
+  it("does not pass the Gemini API key to approved project scripts", async () => {
+    const original = process.env.GEMINI_API_KEY;
+    process.env.GEMINI_API_KEY = "must-not-leak";
+    try {
+      const { stage } = await makeStage("key-isolation", 'node -e "process.stdout.write(process.env.GEMINI_API_KEY || \'unset\')"');
+      const result = await runVerificationScript(stage, "test");
+      expect(result.result.status).toBe("passed");
+      expect(result.output).toContain("unset");
+      expect(result.output).not.toContain("must-not-leak");
+    } finally {
+      if (original === undefined) delete process.env.GEMINI_API_KEY;
+      else process.env.GEMINI_API_KEY = original;
+    }
+  });
 });

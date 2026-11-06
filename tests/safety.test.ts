@@ -178,12 +178,12 @@ describe("safe cleanup sessions", () => {
     stagedCopies.push(staged);
     const prepared = await safety.prepareCleanup(staged);
 
-    // Model a process exit after the first unlink, before the next operation.
+    // Model a process exit after the first unlink but before its state reaches the journal.
     await rm(first);
     const journalPath = path.join(stateDir, `${prepared.id}.json`);
     const journal = JSON.parse(await readFile(journalPath, "utf8")) as import("../src/model.ts").Session;
     journal.status = "applying";
-    journal.files[0].state = "deleted";
+    expect(journal.files[0].state).toBe("pending");
     await writeFile(journalPath, JSON.stringify(journal));
 
     const restored = await safety.undo(prepared.id);

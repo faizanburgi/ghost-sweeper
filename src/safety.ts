@@ -441,11 +441,6 @@ export async function undo(id?: string): Promise<Session> {
       await writeSession(session);
       continue;
     }
-    if (entry.state === "pending" && entry.replacementBase64 === undefined) {
-      entry.state = "restored";
-      await writeSession(session);
-      continue;
-    }
     if (!exists && entry.replacementBase64 !== undefined) {
       entry.state = "conflict";
       conflict = true;
